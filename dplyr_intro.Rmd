@@ -1,0 +1,326 @@
+---
+title: "Uvod v dplyr"
+author: "Roman Luštrik"
+date: "10.2.2015"
+output: 
+  html_document:
+    theme: cerulean
+    highlight: default
+---
+
+V tem tutorialu bomo stopali po stopinjah, kot so jih zagazili v [Introduction to dplyr for Faster Data Manipulation in R](https://rpubs.com/justmarkham/dplyr-tutorial).
+
+```{r echo = FALSE}
+knitr::knit_hooks$set(inline = function(x) {
+  knitr:::format_sci(x, 'md')
+})
+```
+
+```{r}
+library(dplyr)
+library(hflights)
+library(ggplot2)
+library(nycflights13)
+
+fl <- tbl_df(hflights)
+```
+
+`hflights` so podatki odhodov s Houstonskega letališča.
+
+```{r}
+print(fl)
+```
+
+Glagoli, ki jih uporabljamo za manipulacijo s podatki so:
+
+ * `filter` izbira vrstice glede na argument
+ * `select` izbira stolpce glede na argument
+ * `arrange` sortira podatke
+ * `mutate` dodaja spremenljivke
+ * `summarize` povzema spremenljivke v eno številko
+
+## filter
+
+Filter izbira vrstice, ki zadostijo določenim pogojem. Na voljo imamo vse R-jeve logične operatorje.
+
+Najdimo vse lete, ki so pristali na letališčih LEX ali JFK.
+```{r}
+# "osnovni" R način
+lex.jfk <- hflights[hflights$Dest %in% c("LEX", "JFK"), ]
+# with(hflights, hflights[Dest %in% c("LEX", "JFK"), ])
+head(lex.jfk)
+dim(lex.jfk)
+
+lex.jfk <- filter(fl, Dest %in% c("LEX", "JFK"))
+filter(fl, Dest == "LEX" | Dest == "JFK")
+
+ggplot(lex.jfk, aes(x = AirTime, y = ArrDelay)) +
+  theme_bw() +
+  geom_point()
+
+ggplot(lex.jfk, aes(x = AirTime, y = ArrDelay)) +
+  theme_bw() +
+  geom_point() +
+  facet_wrap(~ Dest)
+```
+
+Poglejmo vse lete, ki so odleteli v januarju.
+```{r}
+filter(fl, Month == "1")
+```
+
+Izberimo lete, ki so odleteli v januarju, čas potovanja pa je bil krajši od ene ure.
+```{r}
+jan.ura <- filter(fl, Month == "1", ActualElapsedTime <= 60)
+summary(jan.ura)
+```
+
+Poglejmo lete, kjer je nedvoumna oznaka letalske družbe UA ali YV, hkrati pa je čas potovanja krajši od dveh ur.
+```{r}
+filter(fl, (UniqueCarrier == "UA" | UniqueCarrier == "YV") & ActualElapsedTime <= 120) # oklepaji!
+```
+
+Kaj izberemo s tem ukazom?
+```{r}
+mis1 <- filter(fl, (DayOfWeek == 1 & ActualElapsedTime >= 400) | (DayOfWeek == 7 & ActualElapsedTime < 300))
+
+ggplot(fl, aes(x = DayOfWeek, y = ActualElapsedTime)) +
+  theme_bw() +
+  geom_jitter(alpha = 0.2)
+
+ggplot(mis1, aes(x = DayOfWeek, y = ActualElapsedTime)) +
+  theme_bw() +
+  geom_jitter(alpha = 0.2) +
+  scale_x_discrete(drop = FALSE, limits = 1:7)
+```
+
+## select
+
+Izbiranje stolpcev; v pomoč so nam funkcije `starts_with`, `ends_with`, `matches` in `contains`.
+Za razliko od "osnovnega R-ja", znotraj funkcij ni potrebno pisati imena stolpcev v narekovajih. Podobnega smo vajeni že iz paketa `ggplot2`.
+
+```{r}
+fl[1:6, c("Year", "FlightNum", "Origin", "Diverted")]
+
+# dplyr način
+select(fl, Year, FlightNum, Origin, Diverted)
+select(fl, one_of(c("Year", "FlightNum", "Origin", "Diverted")))
+```
+
+Izberimo stolpcez imeni, kjer se končajo s "Time".
+```{r}
+select(fl, ends_with("Time"))
+```
+
+Lahko tudi kombiniramo več argumentov.
+```{r}
+select(fl, ends_with("Time"), starts_with("Taxi"))
+```
+
+Stolpce lahko filtriramo tudi na podlagi izrazov (`regular expression`). Z ukazom `".th$"` izberemo vse stolpce, katerih imena se končajo s "th".
+```{r}
+select(fl, matches(".th$"))
+```
+
+Stolpce lahko izberemo tudi na osnovi pripone imena stolpca v `data.frame`-u.
+```{r}
+xy <- data.frame(envir1 = runif(5), envir2 = runif(5), envir3 = runif(5), envir4 = runif(5), envir5 = runif(5),
+                 spec1 = runif(5), spec2 = runif(5), spec3 = runif(5), spec4 = runif(5), spec5 = runif(5))
+xy <- tbl_df(xy)
+select(xy, num_range("spec", 3:5))
+```
+
+
+## Veriženje
+
+V tej točki je dobro, da predstavimo koncept veriženja (angl. chaining oz. pipelining). V R-ju navadno ukaze beremo od notranjih oklepajev proti zunanjim, npr.
+
+`flights[flights$DepDelay > 60, c("UniqueCarrier", "DepDelay")]`
+
+v osnovni R sintaksi bi se `dplyr` ukaz
+
+`filter(select(flights, UniqueCarrier, DepDelay), DepDelay > 60)`
+
+bral kot: izberemo stolpca `UniqueCarrier` in `DepDelay` ter ohranimo samo vrstice, ki imajo v stolpcu `DepDelay` več kot 60 minut. Obstaja pa še druga pot, kjer postopek vodimo v vrsticah.
+
+```{r}
+uc <- fl %>%
+  select(UniqueCarrier, DepDelay) %>%
+  filter(DepDelay > 60)
+
+ggplot(uc, aes(x = UniqueCarrier, y = DepDelay)) +
+  theme_bw() +
+  geom_boxplot()
+```
+
+Še en primer.
+```{r}
+fl %>%
+  group_by(UniqueCarrier) %>%
+  summarize(count = n()) %>%
+  filter(count > 40000)
+```
+
+
+## arrange
+
+Za sortiranje vrednosti v stolpcih (spremenljivkah) uporabimo `arrange`.
+
+```{r}
+fl %>% 
+  filter(AirTime > 500) %>%
+  arrange(Month)
+
+fl %>%
+  select(Year, Month, DayofMonth, AirTime, DepDelay) %>%
+  filter(AirTime > 500) %>%
+  arrange(Month, DayofMonth)
+```
+
+Če želimo obrniti vrstni red sortiranja (padajoče), uporabimo `desc`.
+
+```{r}
+fl %>%
+  select(Year, Month, DayofMonth, AirTime, DepDelay) %>%
+  filter(AirTime > 500) %>%
+  arrange(Month, desc(DayofMonth))
+```
+
+## mutate
+
+Pogosto se zgodi, da želimo izračunati novo spremenljivko na osnovi že obstoječih spremenljivk. Tu nam je v pomoč funkcija `mutate`.
+
+Izračunajmo kakšen delež časa je letalo v zraku glede na dolžino potovanja od vrat do vrat.
+```{r}
+pat <- fl %>%
+  mutate(PropAirTravel = AirTime/ActualElapsedTime) %>%
+  select(PropAirTravel, ActualElapsedTime, AirTime)
+
+pat %>%
+  mutate(PropAirTravel = round(PropAirTravel * 100) %>% paste("%"))
+
+fl <- fl %>%
+  mutate(PropAirTravel = round((AirTime/ActualElapsedTime)*100) %>% paste("%"))
+```
+
+## summarize/summarise
+
+```{r}
+fl %>%
+   summarize(mean = mean(AirTime, na.rm = TRUE),
+             sd = sd(AirTime, na.rm = TRUE))
+ 
+(stat1 <- fl %>% 
+   group_by(DayofMonth, UniqueCarrier) %>%
+   summarize(mean = mean(AirTime, na.rm = TRUE),
+             sd = sd(AirTime, na.rm = TRUE))
+ )
+
+stat1 %>%
+  filter(UniqueCarrier == "AA")
+```
+
+Če želimo prešteti število letov v posamezni skupini lahko uporabimo funkcijo  `n()`.
+
+```{r}
+fl %>%
+   group_by(DayofMonth) %>%
+   summarize(count = n())
+```
+
+Za štetje unikatnih vrednosti uporabimo funkcijo `n_distinct()`.
+
+```{r}
+fl %>%
+   group_by(DayofMonth) %>%
+   summarize(unikum = n_distinct(UniqueCarrier))
+```
+
+Bližnica za `n()` je `count`, ki vključuje že funkcijo `group_by()`.
+
+```{r}
+fl %>%
+   count(DayofMonth)
+```
+
+```{r}
+fl %>%
+   group_by(DayofMonth) %>%
+   n_groups()
+ 
+fl %>%
+   group_by(DayofMonth) %>%
+   summarize(count = n())
+
+# ekvivalentno
+fl %>%
+   group_by(DayofMonth) %>%
+   group_size()
+```
+
+Za vsako destinacijo poiščemo koliko letal je opravilo koliko letov.
+
+```{r}
+fl %>%
+   group_by(Dest) %>%
+   summarize(nflights = n(), nplanes = n_distinct(TailNum))
+```
+
+Za vsako destinacijo najdemo število odpovedanih (0) ali opravljenih (1) letov.
+
+```{r}
+fl %>%
+   group_by(Dest) %>%
+   select(Cancelled) %>%
+   table() %>%
+   head()
+```
+
+## Vzorčenje
+
+Vzorčenje je relativno preprosto.
+
+```{r}
+set.seed(357)
+fl %>%
+   sample_n(100)
+```
+
+Lahko vzorčimo kar delež. Tabela ima `r nrow(fl)` vrstic. Ena desetina je torej približno `r round(nrow(fl)/10)` vrstic.
+
+```{r}
+fl %>%
+   sample_frac(0.1) %>%
+   nrow()
+```
+
+## Podatkovne baze
+
+Včasih imamo podatke v različnih bazah, npr. MySQL, SQLite ipd. `dplyr` omogoča klicanje (ne pa tudi manipuliranja v bazi sami) podatkov, manipulacija pa je možna naknadno v R-ju.
+
+```{r}
+# ustvarimo datoteko s končnico sqlite3
+my.db <- src_sqlite("my_db.sqlite3", create = TRUE)
+
+# v kolikor datoteka še ni naseljena z bazo, to storimo s funkcijo copy_to - v bazo kopiramo
+# data.frame flights in paketa nycflights13
+flights.db <- copy_to(my.db, flights, temporary = FALSE, 
+                        indexes = list(c("year", "month", "day"), "carrier", "tailnum"))
+
+# flights.db <- tbl(my.db, "flights")
+
+# dostop do baze, kjer kličemo tabelo "flights" eksplicitno
+out <- tbl(my.db, sql("SELECT tailnum, distance FROM flights WHERE distance > 1000"))
+
+# neposreden dostop do tabele "flights"
+flights.db %>% 
+  filter(distance > 1000 & day == 5 & dest == "LAX") %>%
+  mutate(speed = distance/air_time)
+
+flights.db %>%
+  group_by(month) %>%
+  summarize(delay = mean(dep_delay))
+
+RSQLite::dbDisconnect(my.db$con) # zapre povezavo do baze
+unlink("my_db.sqlite3") # pobriše datoteko
+```
